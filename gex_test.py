@@ -1,46 +1,64 @@
-import aiohttp
+import io
+import requests
 import pandas as pd
 import matplotlib.pyplot as plt
-import io
 import base64
 
-async def gex(symbol: str) -> dict:
-    url = f"https://www.cboe.com/us/options/market_statistics/gamma_exposure/?symbol={symbol.upper()}"
+async def gex(symbol: str):
+    try:
+        # 建立 CBOE 查詢 URL
+        api_url = f"https://cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
+        response = requests.get(api_url)
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status != 200:
-                raise ValueError(f"無法取得 CBOE 數據（HTTP {response.status}）")
+        # 偵錯輸出
+        print("Status code:", response.status_code)
+        print("Response text:", response.text[:500])  # 前 500 字避免太長
 
-            html = await response.text()
+        # 錯誤處理
+        if response.status_code != 200:
+            return {"error": f"CBOE API 回傳狀態碼: {response.status_code}", "body": response.text}
 
-    # 假設你有處理 HTML -> DataFrame 的邏輯
-    # 這裡提供範例 DataFrame
-    data = {
-        "strike": [100, 105, 110],
-        "call_gex": [1.5, 2.3, 0.8],
-        "put_gex": [-0.6, -1.0, -2.1]
-    }
-    df = pd.DataFrame(data)
+        data = response.json()
 
-    # 畫圖（可選）
-    fig, ax = plt.subplots()
-    ax.bar(df["strike"], df["call_gex"], label="Call GEX", alpha=0.7)
-    ax.bar(df["strike"], df["put_gex"], label="Put GEX", alpha=0.7)
-    ax.set_title(f"GEX 分布圖 - {symbol.upper()}")
-    ax.legend()
-    ax.set_xlabel("履約價")
-    ax.set_ylabel("Gamma Exposure")
+        # 假設我們取出 Call/Put 數量與價格資料
+        options = data.get("data", {}).get("options", [])
+        if not options:
+            return {"error": "無法取得選擇權資料", "raw": data}
 
-    # 轉為 base64 傳給前端或 API
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
-    image_base64 = base64.b64encode(buf.read()).decode("utf-8")
-    plt.close()
+        df = pd.DataFrame(options)
+        if df.empty or "strike_price" not in df.columns or "option_type" not in df.columns:
+            return {"error": "CBOE 回傳格式錯誤", "columns": df.columns.tolist(), "raw": data}
 
-    return {
-        "symbol": symbol.upper(),
-        "gex_data": df.to_dict(orient="records"),
-        "chart_base64": image_base64
-    }
+        # 過濾 Call 與 Put 數據
+        call_df = df[df["option_type"] == "call"]
+        put_df = df[df["option_type"] == "put"]
+
+        # 畫圖
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(call_df["strike_price"], call_df["volume"], label="Call", marker="o")
+        ax.plot(put_df["strike_price"], put_df["volume"], label="Put", marker="x")
+        ax.set_title(f"{symbol} Call/Put Volume by Strike Price")
+        ax.set_xlabel("Strike Price")
+        ax.set_ylabel("Volume")
+        ax.legend()
+        ax.grid(True)
+
+        # 儲存為 base64 圖片
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format="png")
+        buffer.seek(0)
+        image_base64 = base64.b64encode(buffer.read()).decode("utf-8")
+        plt.close(fig)
+
+        return {
+            "symbol": symbol.upper(),
+            "status": "success",
+            "chart_base64": image_base64,
+            "note": "成功取得資料與圖表"
+        }
+
+    except Exception as e:
+        return {
+            "error": str(e),
+            "hint": "請確認 symbol 是否正確，或 CBOE 是否變更 API 結構",
+        }
