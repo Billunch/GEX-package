@@ -1,40 +1,37 @@
+import asyncio
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from gex_test import gex  # 你的 async gex function
+from gex_test import gex
 
-app = FastAPI(title="GEX Full API")
+app = FastAPI(title="GEX API")
 
-# ✅ CORS 中介層
+# CORS 設定，允許跨域
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 可視需求限制來源
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ GET API：支援 URL 查詢 ?symbol=xxx
+# GET 版本 API
 @app.get("/api/gex")
-async def get_gex(symbol: str = Query(..., description="股票代號，例如 AAPL")):
+def get_gex(symbol: str = Query(..., description="股票代號，例如 AAPL")):
     try:
-        result = await gex(symbol)
-        if not result:
-            raise HTTPException(status_code=404, detail=f"No GEX data found for {symbol}")
+        result = asyncio.run(gex(symbol))
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"GEX API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ✅ POST API：支援 JSON body，例如 {"symbol": "AAPL"}
+# POST 版本 API
 class GEXRequest(BaseModel):
     symbol: str
 
 @app.post("/api/gex")
-async def post_gex(request: GEXRequest):
+def post_gex(request: GEXRequest):
     try:
-        result = await gex(request.symbol)
-        if not result:
-            raise HTTPException(status_code=404, detail=f"No GEX data found for {request.symbol}")
+        result = asyncio.run(gex(request.symbol))
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"GEX API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
